@@ -1,0 +1,152 @@
+version: '2.9'
+services:
+#elk stack
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.16.1
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m #heap size limit
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data  
+    networks:
+      - ndrc_network
+
+  logstash:
+    image:  docker.elastic.co/logstash/logstash:8.16.1
+    container_name: logstash
+    build:
+      context: ./logstash
+    volumes:
+      - ./logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    ports:
+      - "5044:5044"
+      - "5000:5000"
+      - "9600:9600"
+    depends_on:
+      - elasticsearch
+    networks:
+      - ndrc_network
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.16.1
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ##  - ELASTICSEARCH_SSL_VERIFICATIONMODE=none
+    ##  - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=/usr/share/kibana/config/certs/http_ca.crt
+   ## volumes:
+   ##   - ./http_ca.crt:/usr/share/kibana/config/certs/http_ca.crt
+    ports:
+      - "5601:5601"
+    volumes:
+      - ./kibana_dashboards:/usr/share/kibana/imports
+    entrypoint: ["/bin/sh", "-c", "sh /usr/share/kibana/imports/kibana_entrypoint.sh && /usr/share/kibana/bin/kibana"]
+    depends_on:
+      - elasticsearch
+    networks:
+      - ndrc_network
+#database
+  hq-db:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: hq_user
+      POSTGRES_PASSWORD: hq_pass
+      POSTGRES_DB: hq_db
+    container_name: hq-db
+    ports:
+      - "5432:5432"
+    volumes:
+      - hq-db-data:/var/lib/postgresql/data
+    networks:
+      - ndrc_network
+
+  cloud-db:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: cloud_user
+      POSTGRES_PASSWORD: cloud_pass
+      POSTGRES_DB: cloud_db
+    container_name: cloud-db
+    ports:
+      - "5433:5432"
+    volumes:
+      - cloud-db-data:/var/lib/postgresql/data
+    networks:
+      - ndrc_network
+
+#servers
+  hq:
+    build:
+      context: ./hq
+    container_name: hq
+    volumes:
+      - ./hq/app.py:/app/app.py 
+      - ./hq/templates:/app/templates
+    ports:
+     - "5001:5000"
+    depends_on:
+      - hq-db
+      - elasticsearch
+      - kibana
+    networks:
+      - ndrc_network
+
+  truck:
+    build:
+      context: ./truck
+    container_name: truck
+    volumes:
+      - ./truck/app.py:/app/app.py 
+      - ./truck/templates:/app/templates
+    ports:
+      - "5002:5000"
+    depends_on:
+      - hq
+      - cloud
+    networks:
+      - ndrc_network
+  
+  trailer:
+    build: 
+      context: ./trailer
+    container_name: trailer
+    volumes:
+      - ./trailer/app.py:/app/app.py
+      - ./trailer/templates:/app/templates 
+    ports:
+      - "5003:5000"
+    depends_on:
+      - hq
+      - cloud
+    networks:
+      - ndrc_network
+
+  cloud:
+    build:
+      context: ./cloud
+    container_name: cloud  
+    volumes:
+      - ./cloud/app.py:/app/app.py
+      - ./cloud/templates:/app/templates  
+    ports:
+      - "5004:5000"
+    depends_on:
+      - cloud-db
+    networks:
+      - ndrc_network
+
+networks:
+  ndrc_network:
+    driver: bridge
+
+volumes:
+  hq-db-data:
+  cloud-db-data:
+  elasticsearch-data:
+    driver: local
+    
